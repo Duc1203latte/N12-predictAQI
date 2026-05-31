@@ -1,51 +1,144 @@
-# train_lasso.py — thay toàn bộ phần đầu thành:
-
 import pandas as pd
 import numpy as np
 import os
 import joblib
-from sklearn.preprocessing import MinMaxScaler          # ← dùng MinMax thay Standard
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.linear_model import Lasso
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-# ── Load data ────────────────────────────────────────────────
+#ĐỌC DATA
 df = pd.read_csv("data/processed/features_output1.csv", parse_dates=['datetime'])
 
+print("=" * 55)
+print("  DỮ LIỆU")
+print("=" * 55)
+print(f"  Shape: {df.shape[0]:,} dòng × {df.shape[1]} cột")
+
+#TÁCH X VÀ Y
+# X: features đầu vào
+# Y: 3 target — PM2.5 sau 1h, 2h, 3h
 TARGET_COLS = ['pm25_t1', 'pm25_t2', 'pm25_t3']
 X = df.drop(columns=['datetime'] + TARGET_COLS)
 Y = df[TARGET_COLS]
 
-# ── Chronological split ──────────────────────────────────────
-split_idx      = int(len(df) * 0.8)
-X_train        = X[:split_idx];  X_test  = X[split_idx:]
-Y_train        = Y[:split_idx];  Y_test  = Y[split_idx:]
+#CHRONOLOGICAL SPLIT 80/20
+# KHÔNG shuffle — bắt buộc với time series
+# 80% dữ liệu cũ (quá khứ) → Train
+# 20% dữ liệu mới (tương lai) → Test
+split_idx = int(len(df) * 0.8)
+X_train   = X[:split_idx];  X_test  = X[split_idx:]
+Y_train   = Y[:split_idx];  Y_test  = Y[split_idx:]
 
-# ── MinMaxScaler — Lasso hội tụ tốt hơn với [0,1] ───────────
+train_start = df['datetime'].iloc[0]
+train_end   = df['datetime'].iloc[split_idx - 1]
+test_start  = df['datetime'].iloc[split_idx]
+test_end    = df['datetime'].iloc[-1]
+
+print(f"\n  TRAIN : {X_train.shape[0]:,} dòng")
+print(f"    Từ  : {train_start.strftime('%Y-%m-%d')}")
+print(f"    Đến : {train_end.strftime('%Y-%m-%d')}")
+print(f"\n  TEST  : {X_test.shape[0]:,} dòng")
+print(f"    Từ  : {test_start.strftime('%Y-%m-%d')}")
+print(f"    Đến : {test_end.strftime('%Y-%m-%d')}")
+
+#MINMAXSCALER
+# fit() CHỈ trên X_train — tránh Data Leakage
+# transform() áp cho cả train và test
 scaler         = MinMaxScaler()
 scaler.fit(X_train)
 X_train_scaled = scaler.transform(X_train)
 X_test_scaled  = scaler.transform(X_test)
 
-# ── Train — alpha=0.01 đã tìm được từ GridSearch trước ──────
-best_model = MultiOutputRegressor(
-    Lasso(alpha=0.01, max_iter=100000, tol=1e-3),
+print(f"\n  Scale xong — X_train_scaled: {X_train_scaled.shape}")
+
+#GRIDSEARCHCV + TRAIN LASSO
+# MultiOutputRegressor: train 3 Lasso riêng cho t+1, t+2, t+3
+# GridSearchCV: thử 6 giá trị alpha, mỗi giá trị 5-fold CV
+# Tổng: 30 lần train — mất khoảng 5-10 phút
+param_grid = {
+    'estimator__alpha': [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+}
+
+base_model = MultiOutputRegressor(
+    Lasso(max_iter=100000, tol=1e-3),
     n_jobs=-1
 )
-best_model.fit(X_train_scaled, Y_train)
 
-# ── Đánh giá ─────────────────────────────────────────────────
+grid_search = GridSearchCV(
+    estimator  = base_model,
+    param_grid = param_grid,
+    cv         = 5,
+    scoring    = 'neg_root_mean_squared_error',
+    verbose    = 1,
+    n_jobs     = -1
+)
+
+print("\n" + "=" * 55)
+print("  BẮT ĐẦU GRIDSEARCHCV")
+print(f"  {len(param_grid['estimator__alpha'])} alpha × 5 fold = 30 lần train")
+print("  (Vui lòng chờ 5-10 phút...)")
+print("=" * 55)
+
+grid_search.fit(X_train_scaled, Y_train)
+
+best_model = grid_search.best_estimator_
+best_alpha = grid_search.best_params_['estimator__alpha']
+best_rmse  = abs(grid_search.best_score_)
+
+#KẾT QUẢ GRIDSEARCH
+print("\n" + "=" * 55)
+print("  KẾT QUẢ GRIDSEARCHCV")
+print("=" * 55)
+print(f"  Alpha tốt nhất : {best_alpha}")
+print(f"  RMSE tốt nhất  : {best_rmse:.4f} µg/m³ (TB 5-fold CV)")
+
+print(f"\n  {'Alpha':>10}  {'RMSE (CV)':>12}")
+print(f"  {'-'*10}  {'-'*12}")
+results = grid_search.cv_results_
+for alpha, score in zip(
+    results['param_estimator__alpha'],
+    results['mean_test_score']
+):
+    marker = '  <- best' if alpha == best_alpha else ''
+    print(f"  {alpha:>10}  {abs(score):>10.4f}{marker}")
+
+#ĐÁNH GIÁ TRÊN TẬP TEST
 Y_pred = best_model.predict(X_test_scaled)
 
-print("\n--- Lasso Model Evaluation ---")
+print("\n" + "=" * 55)
+print("  ĐÁNH GIÁ TRÊN TẬP TEST")
+print("=" * 55)
+print(f"  {'Horizon':<10} {'RMSE':>10} {'MAE':>10} {'R2':>8}")
+print(f"  {'-'*10} {'-'*10} {'-'*10} {'-'*8}")
+
 for i, horizon in enumerate(['t+1', 't+2', 't+3']):
     rmse = np.sqrt(mean_squared_error(Y_test.iloc[:, i], Y_pred[:, i]))
     mae  = mean_absolute_error(Y_test.iloc[:, i], Y_pred[:, i])
     r2   = r2_score(Y_test.iloc[:, i], Y_pred[:, i])
-    print(f"{horizon}  RMSE={rmse:.2f}  MAE={mae:.2f}  R²={r2:.4f}")
+    print(f"  {horizon:<10} {rmse:>10.2f} {mae:>10.2f} {r2:>8.4f}")
 
-# ── Lưu model ────────────────────────────────────────────────
+#THÔNG TIN FEATURES
+print("\n" + "=" * 55)
+print("  PHÂN TÍCH LASSO (model t+1)")
+print("=" * 55)
+coef       = best_model.estimators_[0].coef_
+n_zero     = np.sum(coef == 0)
+n_nonzero  = np.sum(coef != 0)
+print(f"  Tổng features  : {len(coef)}")
+print(f"  Giữ lại        : {n_nonzero}  (coef != 0)")
+print(f"  Bị loại        : {n_zero}  (coef = 0)")
+
+#LƯU MODEL
 os.makedirs('models', exist_ok=True)
 joblib.dump(best_model, 'models/lasso_model.pkl')
-joblib.dump(scaler,     'models/lasso_scaler.pkl')   # lưu riêng để phân biệt
-print("\nĐã lưu: models/lasso_model.pkl + lasso_scaler.pkl")
+joblib.dump(scaler,     'models/lasso_scaler.pkl')
+
+print("\n" + "=" * 55)
+print("  ĐÃ LƯU")
+print("=" * 55)
+print(f"  models/lasso_model.pkl")
+print(f"  models/lasso_scaler.pkl")
+print("\n  HOÀN THANH!")
+print("=" * 55)
