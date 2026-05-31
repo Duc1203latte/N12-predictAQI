@@ -17,16 +17,11 @@ print("=" * 55)
 print(f"  Shape: {df.shape[0]:,} dòng × {df.shape[1]} cột")
 
 #TÁCH X VÀ Y
-# X: features đầu vào
-# Y: 3 target — PM2.5 sau 1h, 2h, 3h
 TARGET_COLS = ['pm25_t1', 'pm25_t2', 'pm25_t3']
 X = df.drop(columns=['datetime'] + TARGET_COLS)
 Y = df[TARGET_COLS]
 
 #CHRONOLOGICAL SPLIT 80/20
-# KHÔNG shuffle — bắt buộc với time series
-# 80% dữ liệu cũ (quá khứ) → Train
-# 20% dữ liệu mới (tương lai) → Test
 split_idx = int(len(df) * 0.8)
 X_train   = X[:split_idx];  X_test  = X[split_idx:]
 Y_train   = Y[:split_idx];  Y_test  = Y[split_idx:]
@@ -44,8 +39,6 @@ print(f"    Từ  : {test_start.strftime('%Y-%m-%d')}")
 print(f"    Đến : {test_end.strftime('%Y-%m-%d')}")
 
 #MINMAXSCALER
-# fit() CHỈ trên X_train — tránh Data Leakage
-# transform() áp cho cả train và test
 scaler         = MinMaxScaler()
 scaler.fit(X_train)
 X_train_scaled = scaler.transform(X_train)
@@ -54,9 +47,6 @@ X_test_scaled  = scaler.transform(X_test)
 print(f"\n  Scale xong — X_train_scaled: {X_train_scaled.shape}")
 
 #GRIDSEARCHCV + TRAIN LASSO
-# MultiOutputRegressor: train 3 Lasso riêng cho t+1, t+2, t+3
-# GridSearchCV: thử 6 giá trị alpha, mỗi giá trị 5-fold CV
-# Tổng: 30 lần train — mất khoảng 5-10 phút
 param_grid = {
     'estimator__alpha': [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
 }
