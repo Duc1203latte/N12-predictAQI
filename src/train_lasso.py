@@ -26,7 +26,6 @@ def get_cv_results(X_train_scaled, Y_train, tscv):
 if __name__ == "__main__":
     df = pd.read_csv("../data/processed/features_output1.csv", parse_dates=['datetime'])
 
-    print("=" * 55)
     print("  DỮ LIỆU")
     print("=" * 55)
     print(f"  Shape: {df.shape[0]:,} dòng × {df.shape[1]} cột")
@@ -101,7 +100,6 @@ if __name__ == "__main__":
         print(f"  {horizon:<10} {rmse:>10.2f} {mae:>10.2f} {r2:>8.4f}")
 
     #THÔNG TIN FEATURES
-    print("\n" + "=" * 55)
     print("  PHÂN TÍCH LASSO (model t+1)")
     print("=" * 55)
     coef       = best_model.estimators_[0].coef_
@@ -118,8 +116,6 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 55)
     print("  ĐÃ LƯU")
-    print("=" * 55)
     print(f"  models/lasso_model.pkl")
     print(f"  models/lasso_scaler.pkl")
     print("\n  HOÀN THANH!")
-    print("=" * 55)
